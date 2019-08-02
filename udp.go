@@ -28,28 +28,40 @@ var udpOOBSize = func() int {
 // SessionUDP holds the remote address and the associated
 // out-of-band data.
 type SessionUDP struct {
-	raddr   *net.UDPAddr
+	RAddr   *net.UDPAddr
 	context []byte
+	// For customed tproxy(https://www.kernel.org/doc/Documentation/networking/tproxy.txt)
+	DAddr   *net.UDPAddr
 }
 
 // RemoteAddr returns the remote network address.
-func (s *SessionUDP) RemoteAddr() net.Addr { return s.raddr }
+func (s *SessionUDP) RemoteAddr() net.Addr { return s.RAddr }
 
 // ReadFromSessionUDP acts just like net.UDPConn.ReadFrom(), but returns a session object instead of a
 // net.UDPAddr.
 func ReadFromSessionUDP(conn *net.UDPConn, b []byte) (int, *SessionUDP, error) {
-	oob := make([]byte, udpOOBSize)
+	var (
+		daddr *net.UDPAddr
+		oob   = make([]byte, udpOOBSize)
+	)
 	n, oobn, _, raddr, err := conn.ReadMsgUDP(b, oob)
 	if err != nil {
 		return n, nil, err
 	}
-	return n, &SessionUDP{raddr, oob[:oobn]}, err
+	dst := parseDstFromOOB(oob[:oobn])
+	if dst != nil {
+		daddr = &net.UDPAddr{IP: dst}
+	}
+	return n, &SessionUDP{raddr, oob[:oobn], daddr}, err
 }
 
 // WriteToSessionUDP acts just like net.UDPConn.WriteTo(), but uses a *SessionUDP instead of a net.Addr.
 func WriteToSessionUDP(conn *net.UDPConn, b []byte, session *SessionUDP) (int, error) {
-	oob := correctSource(session.context)
-	n, _, err := conn.WriteMsgUDP(b, oob, session.raddr)
+	var oob []byte
+	if session.DAddr != nil {
+		oob = correctSourceIP(session.DAddr.IP)
+	}
+	n, _, err := conn.WriteMsgUDP(b, oob, session.RAddr)
 	return n, err
 }
 
@@ -89,6 +101,13 @@ func correctSource(oob []byte) []byte {
 	// If the dst is definitely an IPv6, then use ipv6's ControlMessage to
 	// respond otherwise use ipv4's because ipv6's marshal ignores ipv4
 	// addresses.
+	return correctSourceIP(dst)
+}
+
+func correctSourceIP(dst net.IP) []byte {
+	var (
+		oob []byte
+	)
 	if dst.To4() == nil {
 		cm := new(ipv6.ControlMessage)
 		cm.Src = dst

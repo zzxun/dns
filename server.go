@@ -698,12 +698,17 @@ func (w *response) Write(m []byte) (int, error) {
 func (w *response) LocalAddr() net.Addr {
 	switch {
 	case w.udp != nil:
+		if w.udpSession != nil && w.udpSession.DAddr != nil {
+			return w.udpSession.DAddr
+		}
 		return w.udp.LocalAddr()
 	case w.tcp != nil:
 		return w.tcp.LocalAddr()
 	default:
 		panic("dns: internal error: udp and tcp both nil")
 	}
+
+	return w.udp.LocalAddr()
 }
 
 // RemoteAddr implements the ResponseWriter.RemoteAddr method.
